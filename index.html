@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
 <title>Administración de alumnos | Escuela Secundaria General José María Mata</title>
 <style>
 :root{
@@ -586,6 +587,25 @@ textarea{resize:vertical;min-height:82px}
   font-size:13px;
   line-height:1.45;
 }
+.statistics-view-buttons{
+  display:flex;
+  flex-wrap:wrap;
+  gap:9px;
+  margin:0 0 16px;
+  padding:10px;
+  border:1px solid var(--borde);
+  border-radius:13px;
+  background:var(--crema);
+}
+.statistics-view-buttons .btn{
+  flex:1 1 190px;
+  box-shadow:none;
+}
+.statistics-view-buttons .btn[aria-pressed="true"]{
+  background:var(--vino);
+  color:#fff;
+}
+.statistics-view[hidden]{display:none!important}
 
 .statistics-export-bar{
   display:flex;
@@ -878,10 +898,14 @@ textarea{resize:vertical;min-height:82px}
   margin:0;
   border:0;
   border-radius:0;
-  grid-template-columns:minmax(260px,1.35fr) 44px minmax(150px,.65fr) minmax(130px,.55fr) auto;
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
+  gap:14px;
   align-items:start;
 }
 .search-section .toolbar > .field{
+  width:100%!important;
+  min-width:0;
   align-self:start;
 }
 .search-section .toolbar input,
@@ -889,9 +913,16 @@ textarea{resize:vertical;min-height:82px}
   height:46px;
 }
 .search-section .toolbar-actions{
+  grid-column:1/-1;
+  display:flex;
+  justify-content:flex-end;
   align-self:start;
-  padding-top:20px;
+  padding-top:0;
 }
+.search-section .toolbar-actions .btn{min-width:150px}
+tbody#studentsBody{counter-reset:student-row}
+tbody#studentsBody tr{counter-increment:student-row}
+tbody#studentsBody td.progressive-number::before{content:counter(student-row)}
 .field-help{
   margin-top:5px;
   color:var(--muted);
@@ -947,8 +978,9 @@ textarea{resize:vertical;min-height:82px}
 }
 @media(max-width:920px){
   .search-section .toolbar{
-    grid-template-columns:1fr 44px 1fr 1fr;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
   }
+  .search-section .toolbar > .field{width:auto}
   .search-section .toolbar-actions{
     grid-column:1/-1;
   }
@@ -977,7 +1009,7 @@ textarea{resize:vertical;min-height:82px}
     grid-column:1/-1;
   }
   .search-section .toolbar{
-    grid-template-columns:1fr;
+    grid-template-columns:1fr!important;
   }
   .search-separator{
     margin:0 auto;
@@ -1094,18 +1126,10 @@ body.readonly-mode [data-delete]{display:none!important}
       <div class="search-section">
         <div class="search-heading">
           <h2>Consultar alumnos</h2>
-          <p>Busque un alumno mediante su CURP o consulte un grupo completo seleccionando grado y grupo.</p>
+          <p>Consulte la lista completa de un grupo seleccionando grado y grupo.</p>
         </div>
         <div class="toolbar">
-          <div class="field search-field">
-            <label for="searchInput">CURP del alumno</label>
-            <input id="searchInput" type="search" maxlength="18" autocomplete="off"
-                   placeholder="Escriba los 18 caracteres de la CURP"
-                   style="text-transform:uppercase">
-            <div class="field-help">Para una consulta individual, escriba la CURP completa.</div>
-          </div>
-          <div class="search-separator" aria-hidden="true">O</div>
-          <div class="field">
+          <div class="field grade-filter-field">
             <label for="gradeFilter">Grado</label>
             <select id="gradeFilter">
               <option value="">Seleccione</option>
@@ -1114,7 +1138,7 @@ body.readonly-mode [data-delete]{display:none!important}
               <option value="Tercero">Tercero</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field group-filter-field">
             <label for="groupFilter">Grupo</label>
             <select id="groupFilter">
               <option value="">Seleccione</option>
@@ -1141,7 +1165,7 @@ body.readonly-mode [data-delete]{display:none!important}
       <div id="searchPrompt" class="search-prompt">
         <div class="search-prompt-icon">⌕</div>
         <strong>Realice una búsqueda para consultar alumnos</strong>
-        <span>Escriba una CURP completa o seleccione conjuntamente el grado y el grupo.</span>
+        <span>Seleccione conjuntamente el grado y el grupo.</span>
       </div>
 
       <div id="resultTableWrap" class="table-wrap hidden">
@@ -1297,6 +1321,10 @@ body.readonly-mode [data-delete]{display:none!important}
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
         Cerrar ficha
       </button>
+      <button id="downloadConsultPdfBtn" class="btn btn-primary" type="button" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+        Descargar ficha en PDF
+      </button>
     </footer>
   </section>
 </div>
@@ -1340,7 +1368,13 @@ body.readonly-mode [data-delete]{display:none!important}
       <button class="icon-close" data-close-modal="statisticsModal" type="button" aria-label="Cerrar">×</button>
     </header>
     <div class="modal-body">
-      <p class="statistics-intro"><strong>Distribución por turnos:</strong> los grupos A a F corresponden al turno matutino, los grupos G a L al turno vespertino y SG se presenta en el apartado Sin Turno. Los indicadores de género y edad se calculan a partir de la CURP.</p>
+      <p class="statistics-intro">Seleccione el tipo de estadística que desea consultar. Los grupos A a F corresponden al turno matutino y los grupos G a L al turno vespertino.</p>
+
+      <nav class="statistics-view-buttons" aria-label="Tipos de estadística">
+        <button class="btn btn-secondary statistics-view-btn" type="button" data-stat-view="summary" aria-pressed="true">Resumen general</button>
+        <button class="btn btn-secondary statistics-view-btn" type="button" data-stat-view="matutino" aria-pressed="false">Turno matutino</button>
+        <button class="btn btn-secondary statistics-view-btn" type="button" data-stat-view="vespertino" aria-pressed="false">Turno vespertino</button>
+      </nav>
 
       <div class="statistics-export-bar">
         <div class="statistics-export-actions">
@@ -1352,7 +1386,7 @@ body.readonly-mode [data-delete]{display:none!important}
         <div id="statisticsReportMessage" class="message"></div>
       </div>
 
-      <section class="statistics-panel shift-summary-panel full-width">
+      <section class="statistics-panel shift-summary-panel full-width statistics-view" data-stat-panel="summary">
         <h3>Concentrado general por turno</h3>
         <div class="stats-table-wrap">
           <table class="stats-table shift-summary-table" aria-label="Concentrado general de alumnos por turno">
@@ -1398,7 +1432,8 @@ const state = {
   editingStudent: null,
   deletingCurp: '',
   hasSearched: false,
-  statisticsReportCache: null
+  statisticsReportCache: null,
+  consultPdfData: null
 };
 
 const $ = id => document.getElementById(id);
@@ -1581,7 +1616,7 @@ async function loadStudents(showLoader=true) {
     if (handleUnauthorized(response)) return;
     if (!response.ok) throw new Error(response.mensaje || 'No fue posible consultar los registros.');
 
-    state.students = Array.isArray(response.alumnos) ? response.alumnos : [];
+    state.students = (Array.isArray(response.alumnos) ? response.alumnos : []).sort(compareStudentsByName);
     state.statisticsReportCache = null;
     updateStats();
 
@@ -1595,6 +1630,14 @@ async function loadStudents(showLoader=true) {
   } finally {
     if (showLoader) setLoading(false);
   }
+}
+
+function compareStudentsByName(a, b) {
+  const nameA = [a.primerApellido, a.segundoApellido, a.nombres]
+    .map(value => String(value || '').trim()).join(' ');
+  const nameB = [b.primerApellido, b.segundoApellido, b.nombres]
+    .map(value => String(value || '').trim()).join(' ');
+  return nameA.localeCompare(nameB, 'es-MX', { sensitivity:'base', numeric:true });
 }
 
 function getCurpDemographics(curp) {
@@ -1834,7 +1877,7 @@ function updateStats() {
 
   const grades = ['Primero', 'Segundo', 'Tercero'];
   const gradeOrder = Object.fromEntries(grades.map((grade, index) => [grade, index]));
-  const shifts = ['Matutino', 'Vespertino', 'Sin Turno'];
+  const shifts = ['Matutino', 'Vespertino'];
 
   const summaries = shifts.map(name => {
     const rows = enriched.filter(student => student.statisticsShift === name);
@@ -1885,6 +1928,25 @@ function updateStats() {
   $('shiftStatisticsContainer').innerHTML = summaries
     .map(item => renderShiftSection(item.name, item.rows, gradeOrder))
     .join('');
+
+  summaries.forEach(item => {
+    const section = $('shiftStatisticsContainer').querySelector(`[data-shift="${shiftSlug(item.name)}"]`);
+    if (section) {
+      section.classList.add('statistics-view');
+      section.dataset.statPanel = shiftSlug(item.name);
+    }
+  });
+
+  setStatisticsView('summary');
+}
+
+function setStatisticsView(view) {
+  document.querySelectorAll('.statistics-view').forEach(panel => {
+    panel.hidden = panel.dataset.statPanel !== view;
+  });
+  document.querySelectorAll('.statistics-view-btn').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.statView === view));
+  });
 }
 
 
@@ -2178,6 +2240,66 @@ async function ensurePdfLibraries() {
   );
 }
 
+function consultPdfFileName(fullName) {
+  const safeName = String(fullName || 'alumno')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+    .toLowerCase();
+  return `ficha_inscripcion_${safeName || 'alumno'}.pdf`;
+}
+
+async function downloadConsultPdf() {
+  const data = state.consultPdfData;
+  if (!data || !Array.isArray(data.rows) || !data.rows.length) return;
+
+  const button = $('downloadConsultPdfBtn');
+  button.disabled = true;
+  setLoading(true, 'Preparando ficha en PDF...');
+  try {
+    await ensurePdfLibraries();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:'portrait', unit:'pt', format:'letter', compress:true });
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.autoTable({
+      startY:76,
+      margin:{ top:76, right:30, bottom:38, left:30 },
+      head:[['Apartado','Dato','Información registrada']],
+      body:data.rows.map(row => [row.section || 'Información adicional', row.label, formatConsultValue(row.value)]),
+      theme:'grid',
+      styles:{ font:'helvetica', fontSize:7.4, cellPadding:4, overflow:'linebreak', valign:'top', textColor:[35,39,45], lineColor:[205,210,218], lineWidth:.35 },
+      headStyles:{ fillColor:[143,0,55], textColor:[255,255,255], fontStyle:'bold' },
+      columnStyles:{ 0:{cellWidth:112,fontStyle:'bold',fillColor:[255,246,223]}, 1:{cellWidth:125,fontStyle:'bold'}, 2:{cellWidth:'auto'} },
+      didDrawPage:hook => {
+        doc.setFont('helvetica','bold');
+        doc.setTextColor(101,0,42);
+        doc.setFontSize(12);
+        doc.text('ESCUELA SECUNDARIA GENERAL JOSÉ MARÍA MATA', pageWidth / 2, 24, { align:'center' });
+        doc.setFontSize(8);
+        doc.setTextColor(70,75,85);
+        doc.text(`Clave: 30DES0010R · Ciclo escolar: ${data.cycle}`, pageWidth / 2, 36, { align:'center' });
+        doc.setDrawColor(143,0,55);
+        doc.setLineWidth(1);
+        doc.line(30,43,pageWidth-30,43);
+        doc.setFontSize(10);
+        doc.setTextColor(18,60,107);
+        doc.text('FICHA DE INSCRIPCIÓN', pageWidth / 2, 57, { align:'center' });
+        doc.setFontSize(8);
+        doc.setTextColor(55,60,70);
+        doc.text(data.fullName || 'Alumno', pageWidth / 2, 68, { align:'center', maxWidth:pageWidth-60 });
+        pdfFooter(doc, hook.pageNumber, 'Documento generado desde el administrador de registros escolares.');
+      }
+    });
+
+    doc.save(consultPdfFileName(data.fullName));
+  } catch (error) {
+    showMessage('dashboardMessage', error.message || 'No fue posible generar la ficha en PDF.', 'error');
+  } finally {
+    setLoading(false);
+    button.disabled = false;
+  }
+}
+
 function pdfReportHeader(doc, model, title, subtitle='') {
   const pageWidth = doc.internal.pageSize.getWidth();
   doc.setTextColor(4,84,68);
@@ -2457,42 +2579,27 @@ function resetSearchResults(message='') {
     $('searchPrompt').querySelector('span').textContent = 'Presione Buscar para mostrar los resultados.';
   } else {
     $('searchPrompt').querySelector('strong').textContent = 'Realice una búsqueda para consultar alumnos';
-    $('searchPrompt').querySelector('span').textContent = 'Escriba una CURP completa o seleccione conjuntamente el grado y el grupo.';
+    $('searchPrompt').querySelector('span').textContent = 'Seleccione conjuntamente el grado y el grupo.';
   }
 }
 
 function performSearch(showValidation=true) {
-  const curp = cleanCurp($('searchInput').value);
   const grade = $('gradeFilter').value;
   const group = $('groupFilter').value;
 
   showMessage('dashboardMessage');
 
-  if (curp) {
-    $('searchInput').value = curp;
-
-    if (curp.length !== 18 || !/^[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d$/.test(curp)) {
-      resetSearchResults('Complete correctamente la CURP');
-      if (showValidation) {
-        showMessage('dashboardMessage', 'Escriba una CURP válida de 18 caracteres.', 'error');
-      }
-      return;
+  if (!grade || !group) {
+    resetSearchResults('Faltan datos para realizar la búsqueda');
+    if (showValidation) {
+      showMessage('dashboardMessage', 'Seleccione el grado y el grupo.', 'error');
     }
-
-    state.filtered = state.students.filter(student => cleanCurp(student.curp) === curp);
-  } else {
-    if (!grade || !group) {
-      resetSearchResults('Faltan datos para realizar la búsqueda');
-      if (showValidation) {
-        showMessage('dashboardMessage', 'Escriba una CURP completa o seleccione el grado y el grupo.', 'error');
-      }
-      return;
-    }
-
-    state.filtered = state.students.filter(student =>
-      student.grado === grade && student.grupo === group
-    );
+    return;
   }
+
+  state.filtered = state.students.filter(student =>
+    student.grado === grade && student.grupo === group
+  ).sort(compareStudentsByName);
 
   state.page = 1;
   state.hasSearched = true;
@@ -2502,10 +2609,7 @@ function performSearch(showValidation=true) {
   renderTable();
 
   if (state.filtered.length) {
-    const description = curp
-      ? 'Alumno localizado mediante CURP.'
-      : `${grade}, grupo ${group}: ${state.filtered.length} alumno(s).`;
-    showMessage('dashboardMessage', description, 'ok');
+    showMessage('dashboardMessage', `${grade}, grupo ${group}: ${state.filtered.length} alumno(s) en orden alfabético.`, 'ok');
   } else {
     showMessage('dashboardMessage', 'No se encontraron alumnos con los datos proporcionados.', 'info');
   }
@@ -2517,9 +2621,9 @@ function renderTable() {
   const pageItems = state.filtered.slice(start, start + PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(state.filtered.length / PAGE_SIZE));
 
-  tbody.innerHTML = pageItems.map(s => `
+  tbody.innerHTML = pageItems.map((s, index) => `
     <tr>
-      <td>${escapeHtml(s.num)}</td>
+      <td class="progressive-number" aria-label="${index + 1}"></td>
       <td class="curp-cell">${escapeHtml(s.curp)}</td>
       <td class="name-cell">${escapeHtml(s.primerApellido)}</td>
       <td>${escapeHtml(s.segundoApellido)}</td>
@@ -3140,6 +3244,8 @@ async function fetchCompleteStudent(curp, loadingText='Cargando información com
 
 async function consultStudent(curp) {
   showMessage('dashboardMessage');
+  state.consultPdfData = null;
+  $('downloadConsultPdfBtn').disabled = true;
   try {
     const student = await fetchCompleteStudent(curp, 'Preparando ficha completa...');
     if (!student) return;
@@ -3161,6 +3267,8 @@ async function consultStudent(curp) {
     $('consultDetails').innerHTML = rows.length
       ? renderConsultFicha(rows)
       : '<div class="warning-box">El registro fue localizado, pero el servidor no devolvió sus columnas. Instale el Apps Script actualizado.</div>';
+    state.consultPdfData = { student, rows, fullName, school, cycle, studentCurp, grade, group };
+    $('downloadConsultPdfBtn').disabled = !rows.length;
     openModal('consultModal');
   } catch (error) {
     showMessage('dashboardMessage', error.message || 'No fue posible abrir la ficha del alumno.', 'error');
@@ -3390,7 +3498,11 @@ $('togglePassword').addEventListener('click', () => {
 });
 
 $('statsBtn').addEventListener('click', () => { updateStats(); openModal('statisticsModal'); });
+document.querySelectorAll('.statistics-view-btn').forEach(button => {
+  button.addEventListener('click', () => setStatisticsView(button.dataset.statView));
+});
 $('downloadStatsReportBtn').addEventListener('click', downloadStatisticsReport);
+$('downloadConsultPdfBtn').addEventListener('click', downloadConsultPdf);
 $('refreshBtn').addEventListener('click', () => loadStudents());
 $('newBtn').addEventListener('click', newStudent);
 $('logoutBtn').addEventListener('click', logout);
@@ -3401,17 +3513,6 @@ $('deleteConfirmCheck').addEventListener('change', event => {
   if (event.target.checked) showMessage('deleteMessage');
 });
 $('searchBtn').addEventListener('click', () => performSearch(true));
-
-$('searchInput').addEventListener('input', event => {
-  event.target.value = cleanCurp(event.target.value);
-  if (state.hasSearched) resetSearchResults('Los criterios de búsqueda cambiaron');
-});
-$('searchInput').addEventListener('keydown', event => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    performSearch(true);
-  }
-});
 $('gradeFilter').addEventListener('change', () => {
   if (state.hasSearched) resetSearchResults('Los criterios de búsqueda cambiaron');
 });
@@ -3419,7 +3520,6 @@ $('groupFilter').addEventListener('change', () => {
   if (state.hasSearched) resetSearchResults('Los criterios de búsqueda cambiaron');
 });
 $('clearFiltersBtn').addEventListener('click', () => {
-  $('searchInput').value = '';
   $('gradeFilter').value = '';
   $('groupFilter').value = '';
   showMessage('dashboardMessage');
@@ -3457,4 +3557,3 @@ restoreSession();
 </script>
 </body>
 </html>
-
