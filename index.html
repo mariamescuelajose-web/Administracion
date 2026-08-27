@@ -1368,7 +1368,7 @@ body.readonly-mode [data-delete]{display:none!important}
       <button class="icon-close" data-close-modal="statisticsModal" type="button" aria-label="Cerrar">×</button>
     </header>
     <div class="modal-body">
-      <p class="statistics-intro">Seleccione el tipo de estadística que desea consultar. Los grupos A a F corresponden al turno matutino y los grupos G a L al turno vespertino.</p>
+      <p class="statistics-intro">Seleccione el tipo de estadística que desea consultar. La estadística se calcula con los alumnos disponibles en el listado general, sin utilizar la clave de seguridad como criterio de inclusión. Los grupos A a F corresponden al turno matutino y los grupos G a L al turno vespertino.</p>
 
       <nav class="statistics-view-buttons" aria-label="Tipos de estadística">
         <button class="btn btn-secondary statistics-view-btn" type="button" data-stat-view="summary" aria-pressed="true">Resumen general</button>
@@ -1433,6 +1433,8 @@ const state = {
   deletingCurp: '',
   hasSearched: false,
   statisticsReportCache: null,
+  registrationStatusCache: new Map(),
+  groupResultsCache: new Map(),
   consultPdfData: null
 };
 
@@ -1618,7 +1620,8 @@ async function loadStudents(showLoader=true) {
 
     state.students = (Array.isArray(response.alumnos) ? response.alumnos : []).sort(compareStudentsByName);
     state.statisticsReportCache = null;
-    updateStats();
+    state.registrationStatusCache.clear();
+    state.groupResultsCache.clear();
 
     if (repeatPreviousSearch) {
       await performSearch(false);
@@ -1868,8 +1871,18 @@ function renderShiftSection(name, rows, gradeOrder) {
   </section>`;
 }
 
-function updateStats() {
-  const enriched = state.students.map(student => ({
+function getStudentsForStatistics() {
+  // La estadística usa directamente el listado general ya cargado.
+  // No se comprueba ni se exige clave de seguridad.
+  return (Array.isArray(state.students) ? state.students : [])
+    .filter(student => cleanCurp(findStudentValue(student, ['curp']) || student.curp))
+    .slice()
+    .sort(compareStudentsByName);
+}
+
+async function updateStats() {
+  const statisticsStudents = getStudentsForStatistics();
+  const enriched = statisticsStudents.map(student => ({
     ...student,
     demographics: getCurpDemographics(student.curp),
     statisticsShift: statsShiftName(student.grupo)
@@ -2348,7 +2361,7 @@ function generateStatisticsPdf(model) {
   // Página 1
   const enrollment = buildEnrollmentRows(model);
   pdfReportHeader(doc, model, 'Alumnas y alumnos por grado, sexo, nuevo ingreso, repetidores, edad y grupos',
-    'Los subtotales contienen toda la matrícula disponible. N/D significa que el dato no se encuentra capturado en la hoja de cálculo.');
+    'Los subtotales consideran los registros disponibles en el reporte. N/D significa que el dato no se encuentra capturado en la hoja de cálculo.');
   doc.autoTable({
     ...common,
     startY:76,
@@ -2395,7 +2408,7 @@ function generateStatisticsPdf(model) {
   // Página 3
   doc.addPage('legal','landscape');
   pdfReportHeader(doc, model, 'Resumen estadístico del alumnado',
-    'Se incluyen todos los indicadores que pueden obtenerse del Sheet. Los campos no capturados se identifican como N/D.');
+    'Se incluyen los alumnos disponibles en el reporte, sin utilizar la clave de seguridad como criterio. Los campos no capturados se identifican como N/D.');
   const summaryHead = [[
     'Grado','Hombres','Mujeres','Total','Grupos','Lenguas indígenas','Nacidos fuera de México',
     'Afrodescendientes','Con discapacidad','Con trastorno / neurodivergencia','Aptitudes sobresalientes','Otras condiciones'
@@ -2403,7 +2416,7 @@ function generateStatisticsPdf(model) {
   doc.setFont('helvetica','bold');
   doc.setFontSize(9.5);
   doc.setTextColor(30,35,42);
-  doc.text('1. Alumnas y alumnos existentes en los registros disponibles', 24, 78);
+  doc.text('1. Alumnas y alumnos registrados', 24, 78);
   doc.autoTable({
     ...common,
     startY:86,
@@ -2508,8 +2521,13 @@ async function getStatisticsReportPayload() {
   if (handleUnauthorized(response)) return null;
 
   if (response && response.ok) {
-    state.statisticsReportCache = response;
-    return response;
+    const reportResponse = {
+      ...response,
+      alumnos: Array.isArray(response.alumnos) ? response.alumnos : []
+    };
+    reportResponse.total = reportResponse.alumnos.length;
+    state.statisticsReportCache = reportResponse;
+    return reportResponse;
   }
 
   const message = response && response.mensaje
@@ -2517,21 +2535,9 @@ async function getStatisticsReportPayload() {
     : 'El Apps Script no devolvió la información del reporte.';
   const normalizedMessage = reportNormalize(message);
 
-  // Compatibilidad con implementaciones anteriores del Apps Script:
-  // si todavía no existe la acción específica del reporte, se genera el PDF
-  // con la matrícula ya cargada en la página, sin mostrar un error al usuario.
+  // Compatibilidad con implementaciones anteriores del Apps Script.
   if (/accion no reconocida|accion post no reconocida/.test(normalizedMessage)) {
-    let students = Array.isArray(state.students) ? state.students : [];
-
-    if (!students.length) {
-      const listResponse = await api('adminListar', { token:state.token }, 30000);
-      if (handleUnauthorized(listResponse)) return null;
-      if (listResponse && listResponse.ok && Array.isArray(listResponse.alumnos)) {
-        students = listResponse.alumnos;
-      }
-    }
-
-    const fallback = buildBasicStatisticsReportPayload(students);
+    const fallback = buildBasicStatisticsReportPayload(getStudentsForStatistics());
     state.statisticsReportCache = fallback;
     return fallback;
   }
@@ -2642,24 +2648,45 @@ async function filterStudentsWithRegisteredInformation(candidates) {
   const pending = [];
 
   candidates.forEach(student => {
-    if (hasMeaningfulRegistrationData(student)) accepted.push(student);
-    else pending.push(student);
+    const curp = cleanCurp(findStudentValue(student, ['curp']) || student.curp);
+    if (!curp) return;
+
+    if (hasMeaningfulRegistrationData(student)) {
+      state.registrationStatusCache.set(curp, true);
+      accepted.push(student);
+      return;
+    }
+
+    if (state.registrationStatusCache.has(curp)) {
+      if (state.registrationStatusCache.get(curp)) accepted.push(student);
+      return;
+    }
+
+    pending.push(student);
   });
 
-  // adminListar puede devolver solo los datos básicos. En ese caso se consulta
-  // el expediente completo en grupos pequeños antes de decidir si debe mostrarse.
-  const concurrency = 6;
-  for (let i = 0; i < pending.length; i += concurrency) {
-    const batch = pending.slice(i, i + concurrency);
-    const checked = await Promise.all(batch.map(fetchStudentForRegistrationCheck));
-    checked.forEach(student => {
-      if (student && hasMeaningfulRegistrationData(student)) accepted.push(student);
-    });
+  // Solo se consulta al servidor cuando el listado general no permite saber si
+  // el expediente tiene información adicional. Se usa un grupo amplio de
+  // trabajadores paralelos y se recuerda el resultado para no repetir llamadas.
+  const concurrency = Math.min(18, pending.length || 1);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < pending.length) {
+      const student = pending[nextIndex++];
+      const curp = cleanCurp(findStudentValue(student, ['curp']) || student.curp);
+      const checked = await fetchStudentForRegistrationCheck(student);
+      const hasData = Boolean(checked && hasMeaningfulRegistrationData(checked));
+      state.registrationStatusCache.set(curp, hasData);
+      if (hasData) accepted.push(checked);
+    }
   }
 
-  const order = new Map(candidates.map((student, index) => [cleanCurp(findStudentValue(student, ['curp']) || student.curp), index]));
-  accepted.sort((a, b) => (order.get(cleanCurp(findStudentValue(a, ['curp']) || a.curp)) ?? 0) - (order.get(cleanCurp(findStudentValue(b, ['curp']) || b.curp)) ?? 0));
-  return accepted;
+  if (pending.length) {
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  }
+
+  return accepted.sort(compareStudentsByName);
 }
 
 async function performSearch(showValidation=true) {
@@ -2680,11 +2707,22 @@ async function performSearch(showValidation=true) {
     student.grado === grade && student.grupo === group
   ).sort(compareStudentsByName);
 
-  setLoading(true, 'Verificando expedientes con información registrada...');
-  try {
-    state.filtered = await filterStudentsWithRegisteredInformation(candidates);
-  } finally {
-    setLoading(false);
+  const cacheKey = `${grade}|${group}`;
+  if (state.groupResultsCache.has(cacheKey)) {
+    state.filtered = state.groupResultsCache.get(cacheKey).slice();
+  } else {
+    const searchButton = $('searchBtn');
+    const previousHtml = searchButton.innerHTML;
+    searchButton.disabled = true;
+    searchButton.innerHTML = '<span class="spinner-mini" aria-hidden="true"></span> Consultando...';
+    showMessage('dashboardMessage', 'Consultando los expedientes del grupo seleccionado...', 'info');
+    try {
+      state.filtered = await filterStudentsWithRegisteredInformation(candidates);
+      state.groupResultsCache.set(cacheKey, state.filtered.slice());
+    } finally {
+      searchButton.disabled = false;
+      searchButton.innerHTML = previousHtml;
+    }
   }
 
   state.page = 1;
@@ -3583,7 +3621,14 @@ $('togglePassword').addEventListener('click', () => {
   $('togglePassword').textContent = input.type === 'password' ? 'Mostrar' : 'Ocultar';
 });
 
-$('statsBtn').addEventListener('click', () => { updateStats(); openModal('statisticsModal'); });
+$('statsBtn').addEventListener('click', async () => {
+  try {
+    await updateStats();
+    openModal('statisticsModal');
+  } catch (error) {
+    showMessage('dashboardMessage', error.message || 'No fue posible preparar la estadística.', 'error');
+  }
+});
 document.querySelectorAll('.statistics-view-btn').forEach(button => {
   button.addEventListener('click', () => setStatisticsView(button.dataset.statView));
 });
