@@ -1621,7 +1621,7 @@ async function loadStudents(showLoader=true) {
     updateStats();
 
     if (repeatPreviousSearch) {
-      performSearch(false);
+      await performSearch(false);
     } else {
       resetSearchResults();
     }
@@ -2240,60 +2240,56 @@ async function ensurePdfLibraries() {
   );
 }
 
-function consultPdfFileName(fullName) {
-  const safeName = String(fullName || 'alumno')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-    .toLowerCase();
-  return `ficha_inscripcion_${safeName || 'alumno'}.pdf`;
+async function ensureConsultPdfLibrary() {
+  await loadExternalScript(
+    'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js',
+    () => Boolean(window.html2pdf)
+  );
+}
+
+function safePdfFilename(value) {
+  return String(value || 'ficha_alumno')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 90) || 'ficha_alumno';
 }
 
 async function downloadConsultPdf() {
-  const data = state.consultPdfData;
-  if (!data || !Array.isArray(data.rows) || !data.rows.length) return;
-
+  const printable = $('consultPrintable');
   const button = $('downloadConsultPdfBtn');
+  if (!printable || !button || $('consultModal').classList.contains('hidden')) return;
+
   button.disabled = true;
-  setLoading(true, 'Preparando ficha en PDF...');
+  setLoading(true, 'Creando PDF con la misma vista de la ficha...');
   try {
-    await ensurePdfLibraries();
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation:'portrait', unit:'pt', format:'letter', compress:true });
-    const pageWidth = doc.internal.pageSize.getWidth();
+    await ensureConsultPdfLibrary();
+    const title = $('consultModalTitle').textContent.replace(/^Ficha de inscripción\s*·?\s*/i, '').trim();
+    const filename = `${safePdfFilename(title || 'ficha_alumno')}_inscripcion.pdf`;
 
-    doc.autoTable({
-      startY:76,
-      margin:{ top:76, right:30, bottom:38, left:30 },
-      head:[['Apartado','Dato','Información registrada']],
-      body:data.rows.map(row => [row.section || 'Información adicional', row.label, formatConsultValue(row.value)]),
-      theme:'grid',
-      styles:{ font:'helvetica', fontSize:7.4, cellPadding:4, overflow:'linebreak', valign:'top', textColor:[35,39,45], lineColor:[205,210,218], lineWidth:.35 },
-      headStyles:{ fillColor:[143,0,55], textColor:[255,255,255], fontStyle:'bold' },
-      columnStyles:{ 0:{cellWidth:112,fontStyle:'bold',fillColor:[255,246,223]}, 1:{cellWidth:125,fontStyle:'bold'}, 2:{cellWidth:'auto'} },
-      didDrawPage:hook => {
-        doc.setFont('helvetica','bold');
-        doc.setTextColor(101,0,42);
-        doc.setFontSize(12);
-        doc.text('ESCUELA SECUNDARIA GENERAL JOSÉ MARÍA MATA', pageWidth / 2, 24, { align:'center' });
-        doc.setFontSize(8);
-        doc.setTextColor(70,75,85);
-        doc.text(`Clave: 30DES0010R · Ciclo escolar: ${data.cycle}`, pageWidth / 2, 36, { align:'center' });
-        doc.setDrawColor(143,0,55);
-        doc.setLineWidth(1);
-        doc.line(30,43,pageWidth-30,43);
-        doc.setFontSize(10);
-        doc.setTextColor(18,60,107);
-        doc.text('FICHA DE INSCRIPCIÓN', pageWidth / 2, 57, { align:'center' });
-        doc.setFontSize(8);
-        doc.setTextColor(55,60,70);
-        doc.text(data.fullName || 'Alumno', pageWidth / 2, 68, { align:'center', maxWidth:pageWidth-60 });
-        pdfFooter(doc, hook.pageNumber, 'Documento generado desde el administrador de registros escolares.');
+    const options = {
+      margin: [7, 7, 7, 7],
+      filename,
+      image: { type:'jpeg', quality:0.98 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        scrollX: 0,
+        scrollY: 0
+      },
+      jsPDF: { unit:'mm', format:'a4', orientation:'portrait', compress:true },
+      pagebreak: {
+        mode: ['css', 'legacy'],
+        avoid: ['.consult-pdf-heading', '.consult-pdf-topline', '.consult-pdf-section', '.consult-record-note']
       }
-    });
+    };
 
-    doc.save(consultPdfFileName(data.fullName));
+    await window.html2pdf().set(options).from(printable).save();
   } catch (error) {
-    showMessage('dashboardMessage', error.message || 'No fue posible generar la ficha en PDF.', 'error');
+    showMessage('dashboardMessage', error.message || 'No fue posible descargar la ficha en PDF.', 'error');
   } finally {
     setLoading(false);
     button.disabled = false;
@@ -2583,7 +2579,90 @@ function resetSearchResults(message='') {
   }
 }
 
-function performSearch(showValidation=true) {
+const REGISTRATION_BASE_KEYS = new Set([
+  'num','numero','número','numeroLista','número de lista','numAlumno',
+  'curp','curpAlumno','curpAcceso','claveSeguridad','clave de seguridad',
+  'primerApellido','primer apellido','apellido paterno',
+  'segundoApellido','segundo apellido','apellido materno',
+  'nombres','nombreAlumno','nombre','nombre completo','nombreCompleto',
+  'fechaNacimiento','fecha de nacimiento','edad','genero','género','sexo','entidadNacimiento','entidad de nacimiento',
+  'grado','grupo','turno','escuela','cct','ciclo','cicloEscolar','ciclo escolar',
+  'fila','id','indice','índice'
+].map(normalizeFieldKey));
+
+function hasRegistrationContent(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return Boolean(text) && normalizeSearch(text) !== 'sin informacion';
+  }
+  if (Array.isArray(value)) return value.some(hasRegistrationContent);
+  if (typeof value === 'object') {
+    return Object.entries(value).some(([key, nested]) => {
+      const normalizedKey = normalizeFieldKey(key);
+      if (REGISTRATION_BASE_KEYS.has(normalizedKey) || CONSULT_INTERNAL_KEYS.has(normalizedKey)) return false;
+      return hasRegistrationContent(nested);
+    });
+  }
+  return false;
+}
+
+function hasMeaningfulRegistrationData(student) {
+  if (!student || typeof student !== 'object') return false;
+  return Object.entries(student).some(([key, value]) => {
+    const normalizedKey = normalizeFieldKey(key);
+    if (REGISTRATION_BASE_KEYS.has(normalizedKey) || CONSULT_INTERNAL_KEYS.has(normalizedKey)) return false;
+    return hasRegistrationContent(value);
+  });
+}
+
+async function fetchStudentForRegistrationCheck(student) {
+  const curp = cleanCurp(findStudentValue(student, ['curp']) || student.curp);
+  if (!curp) return student;
+
+  try {
+    const response = await api('adminConsultar', { token:state.token, curp }, 25000);
+    if (handleUnauthorized(response)) return null;
+    if (response && response.ok && response.alumno && typeof response.alumno === 'object') {
+      const index = state.students.findIndex(item => cleanCurp(findStudentValue(item, ['curp']) || item.curp) === curp);
+      const merged = index >= 0 ? { ...state.students[index], ...response.alumno } : { ...student, ...response.alumno };
+      if (index >= 0) state.students[index] = merged;
+      return merged;
+    }
+  } catch (_) {
+    // Si el servidor no puede confirmar el expediente, no se considera registro completo.
+  }
+  return student;
+}
+
+async function filterStudentsWithRegisteredInformation(candidates) {
+  const accepted = [];
+  const pending = [];
+
+  candidates.forEach(student => {
+    if (hasMeaningfulRegistrationData(student)) accepted.push(student);
+    else pending.push(student);
+  });
+
+  // adminListar puede devolver solo los datos básicos. En ese caso se consulta
+  // el expediente completo en grupos pequeños antes de decidir si debe mostrarse.
+  const concurrency = 6;
+  for (let i = 0; i < pending.length; i += concurrency) {
+    const batch = pending.slice(i, i + concurrency);
+    const checked = await Promise.all(batch.map(fetchStudentForRegistrationCheck));
+    checked.forEach(student => {
+      if (student && hasMeaningfulRegistrationData(student)) accepted.push(student);
+    });
+  }
+
+  const order = new Map(candidates.map((student, index) => [cleanCurp(findStudentValue(student, ['curp']) || student.curp), index]));
+  accepted.sort((a, b) => (order.get(cleanCurp(findStudentValue(a, ['curp']) || a.curp)) ?? 0) - (order.get(cleanCurp(findStudentValue(b, ['curp']) || b.curp)) ?? 0));
+  return accepted;
+}
+
+async function performSearch(showValidation=true) {
   const grade = $('gradeFilter').value;
   const group = $('groupFilter').value;
 
@@ -2597,9 +2676,16 @@ function performSearch(showValidation=true) {
     return;
   }
 
-  state.filtered = state.students.filter(student =>
+  const candidates = state.students.filter(student =>
     student.grado === grade && student.grupo === group
   ).sort(compareStudentsByName);
+
+  setLoading(true, 'Verificando expedientes con información registrada...');
+  try {
+    state.filtered = await filterStudentsWithRegisteredInformation(candidates);
+  } finally {
+    setLoading(false);
+  }
 
   state.page = 1;
   state.hasSearched = true;
@@ -2609,9 +2695,9 @@ function performSearch(showValidation=true) {
   renderTable();
 
   if (state.filtered.length) {
-    showMessage('dashboardMessage', `${grade}, grupo ${group}: ${state.filtered.length} alumno(s) en orden alfabético.`, 'ok');
+    showMessage('dashboardMessage', `${grade}, grupo ${group}: ${state.filtered.length} alumno(s) con información registrada, en orden alfabético.`, 'ok');
   } else {
-    showMessage('dashboardMessage', 'No se encontraron alumnos con los datos proporcionados.', 'info');
+    showMessage('dashboardMessage', 'No se encontraron alumnos con información de inscripción registrada para el grado y grupo seleccionados.', 'info');
   }
 }
 
